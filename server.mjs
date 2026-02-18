@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 /**
  * Fake OIDC server that mimics Okta for offline local development.
  *
@@ -20,9 +21,9 @@
  */
 
 import { createSign, generateKeyPairSync, randomUUID } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
-import { basename, dirname, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import prompts from 'prompts'
 
@@ -133,31 +134,70 @@ async function pickProfileInteractively(profiles) {
 }
 
 // ---------------------------------------------------------------------------
-// Interactive target project picker (TUI)
+// Interactive target project picker (TUI) — directory browser
 // ---------------------------------------------------------------------------
 
 /**
- * Ask the user which project directory should receive the .env.local file.
- * Shows the last-used path as a default. Validates the path exists.
+ * List subdirectories of a given path, sorted alphabetically.
+ * Filters out hidden directories (starting with '.').
+ */
+function listSubdirs(dir) {
+  try {
+    return readdirSync(dir)
+      .filter((name) => {
+        if (name.startsWith('.')) return false
+        try {
+          return statSync(join(dir, name)).isDirectory()
+        } catch {
+          return false
+        }
+      })
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Interactive directory browser. Lets the user navigate the filesystem
+ * with arrow keys and select a target directory. Starts from the parent
+ * of this repo, or from the last-used target path.
  */
 async function pickTargetInteractively() {
   const config = loadConfig()
-  const lastTarget = config.lastTarget || undefined
+  const lastTarget = config.lastTarget || null
+  const startDir = lastTarget && existsSync(lastTarget)
+    ? lastTarget
+    : resolve(__dirname, '..')
 
-  const { target } = await prompts({
-    type: 'text',
-    name: 'target',
-    message: 'Target project directory (where .env.local will be written)',
-    initial: lastTarget,
-    validate: (value) => {
-      if (!value) return 'Please enter a directory path'
-      const resolved = resolve(value)
-      if (!existsSync(resolved)) return `Directory not found: ${resolved}`
-      return true
-    },
-  }, { onCancel: () => process.exit(0) })
+  let currentDir = startDir
 
-  return resolve(target)
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const subdirs = listSubdirs(currentDir)
+
+    const choices = [
+      { title: '\x1b[32m\u2714 Select this directory\x1b[0m', value: '__select__' },
+      { title: '\x1b[2m../ (go up)\x1b[0m', value: '__up__' },
+      ...subdirs.map((name) => ({ title: `\x1b[34m\uD83D\uDCC1\x1b[0m ${name}`, value: name })),
+    ]
+
+    const { dir } = await prompts({
+      type: 'select',
+      name: 'dir',
+      message: currentDir,
+      choices,
+      hint: 'navigate with arrow keys',
+    }, { onCancel: () => process.exit(0) })
+
+    if (dir === '__select__') {
+      return currentDir
+    } else if (dir === '__up__') {
+      currentDir = resolve(currentDir, '..')
+    } else {
+      currentDir = resolve(currentDir, dir)
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -563,21 +603,25 @@ async function boot() {
   // Start the HTTP server
   const groupsList = MOCK_USER.groups.join(', ')
   const targetDisplay = TARGET_PROJECT_DIR || 'none (skipped)'
+
+  const DIM = '\x1b[2m'
+  const RESET = '\x1b[0m'
+  const BOLD = '\x1b[1m'
+  const GREEN = '\x1b[32m'
+  const CYAN = '\x1b[36m'
+
   server.listen(PORT, () => {
     // biome-ignore lint/suspicious/noConsole: CLI tool startup banner
     console.log(`
-╔══════════════════════════════════════════════════════════════╗
-║  Fake OIDC Provider                                        ║
-║                                                            ║
-║  Listening:     http://localhost:${String(PORT).padEnd(27)}║
-║                                                            ║
-║  Profile:       ${ACTIVE_PROFILE_NAME.padEnd(41)}║
-║  Mock user:     ${(`${MOCK_USER.firstName} ${MOCK_USER.lastName}`).padEnd(41)}║
-║  Email:         ${MOCK_USER.email.padEnd(41)}║
-║  Groups:        ${groupsList.length > 41 ? `${groupsList.slice(0, 38)}...` : groupsList.padEnd(41)}║
-║                                                            ║
-║  Target:        ${targetDisplay.length > 41 ? `${targetDisplay.slice(0, 38)}...` : targetDisplay.padEnd(41)}║
-╚══════════════════════════════════════════════════════════════╝
+  ${BOLD}Fake OIDC Provider${RESET}
+
+  ${DIM}Listening${RESET}       ${GREEN}http://localhost:${PORT}${RESET}
+
+  ${DIM}Profile${RESET}        ${BOLD}${ACTIVE_PROFILE_NAME}${RESET}
+  ${DIM}Mock user${RESET}      ${MOCK_USER.firstName} ${MOCK_USER.lastName} ${DIM}<${MOCK_USER.email}>${RESET}
+  ${DIM}Groups${RESET}         ${groupsList}
+
+  ${DIM}Target${RESET}         ${CYAN}${targetDisplay}${RESET}
 `)
   })
 }

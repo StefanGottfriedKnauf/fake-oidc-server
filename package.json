@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "Lightweight fake OIDC/Okta server for offline local development",
+  "bin": {
+    "fake-oidc": "server.mjs"
+  },
   "scripts": {
     "start": "bun run server.mjs"
   },
