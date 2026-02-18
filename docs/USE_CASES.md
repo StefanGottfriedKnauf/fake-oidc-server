@@ -5,7 +5,7 @@
 Test what a user sees when they only have access to one market (e.g. France):
 
 ```bash
-node server.mjs --profile single-market
+bun run server.mjs --profile single-market
 ```
 
 The market selector in the UI will only show FR.
@@ -15,26 +15,26 @@ The market selector in the UI will only show FR.
 Give the user access to several markets to test the market selector and switching:
 
 ```bash
-node server.mjs --profile default
+bun run server.mjs --profile default
 ```
 
 Or specify groups directly:
 
 ```bash
 FAKE_OIDC_GROUPS="CT_UP_DE_GROUP,CT_UP_UK_GROUP,CT_UP_FR_GROUP,CT_UP_IT_GROUP" \
-node server.mjs
+bun run server.mjs
 ```
 
 ## All markets at once
 
 ```bash
-node server.mjs --profile all-markets
+bun run server.mjs --profile all-markets
 ```
 
 ## Unauthorized access (no matching groups)
 
 ```bash
-node server.mjs --profile unauthorized
+bun run server.mjs --profile unauthorized
 ```
 
 The app calls `RequireUserSession` which triggers a 401 when no groups match.
@@ -56,7 +56,7 @@ PUBLISH_GROUPS=CT_UP_COMMON_GROUP
 ```
 Then start the fake OIDC server with that group included:
 ```bash
-FAKE_OIDC_GROUPS="CT_UP_DE_GROUP,CT_UP_COMMON_GROUP" node server.mjs
+FAKE_OIDC_GROUPS="CT_UP_DE_GROUP,CT_UP_COMMON_GROUP" bun run server.mjs
 ```
 
 **Test with import/publish disabled** — use a group the user doesn't have:
@@ -71,7 +71,7 @@ The import and publish buttons will be hidden or disabled in the UI.
 Simulate a particular person (useful for debugging user-specific issues or analytics):
 
 ```bash
-node server.mjs --profile admin
+bun run server.mjs --profile admin
 ```
 
 Or with fully custom values:
@@ -82,7 +82,7 @@ FAKE_OIDC_LAST_NAME=Mustermann \
 FAKE_OIDC_EMAIL=max.mustermann@knauf.com \
 FAKE_OIDC_KNAUF_ID=knauf-12345 \
 FAKE_OIDC_GROUPS="CT_UP_DE_GROUP,CT_UP_AT_GROUP,CT_UP_CH_GROUP" \
-node server.mjs
+bun run server.mjs
 ```
 
 The navbar will show the configured name and API calls will carry this identity.

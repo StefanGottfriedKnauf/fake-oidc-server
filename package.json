@@ -4,7 +4,9 @@
   "private": true,
   "description": "Lightweight fake OIDC/Okta server for offline local development",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "bun run server.mjs"
   },
-  "dependencies": {}
+  "dependencies": {
+    "prompts": "^2.4.2"
+  }
 }

@@ -20,13 +20,13 @@ The access token is a real RS256-signed JWT containing user claims in the same f
 The easiest way is to use a **profile** — a JSON file in `profiles/`:
 
 ```bash
-node server.mjs --profile single-market
+bun run server.mjs --profile single-market
 ```
 
 Or set the `FAKE_OIDC_PROFILE` env var:
 
 ```bash
-FAKE_OIDC_PROFILE=admin node server.mjs
+FAKE_OIDC_PROFILE=admin bun run server.mjs
 ```
 
 ### Built-in profiles
@@ -54,7 +54,7 @@ Add a JSON file to `profiles/`:
 }
 ```
 
-Then use it: `node server.mjs --profile <filename-without-extension>`
+Then use it: `bun run server.mjs --profile <filename-without-extension>`
 
 ### Env var overrides
 
@@ -65,7 +65,7 @@ FAKE_OIDC_FIRST_NAME=Jane \
 FAKE_OIDC_LAST_NAME=Doe \
 FAKE_OIDC_EMAIL=jane@example.com \
 FAKE_OIDC_GROUPS="CT_UP_DE_GROUP,CT_UP_FR_GROUP,CT_UP_IT_GROUP" \
-node server.mjs
+bun run server.mjs
 ```
 
 ## Environment variable reference
@@ -81,6 +81,7 @@ node server.mjs
 | `FAKE_OIDC_KNAUF_ID` | `mock-knauf-id` | Knauf ID claim |
 | `FAKE_OIDC_GROUPS` | `CT_UP_DE_GROUP,CT_UP_UK_GROUP` | Comma-separated group memberships (controls market access) |
 | `FAKE_OIDC_PROFILE` | `default` | Profile name to load from `profiles/` directory |
+| `FAKE_OIDC_TARGET` | — | Target project directory for `.env.local` |
 
 ## Available groups
 
@@ -100,11 +101,11 @@ See `MARKETS_MAPPED_WITH_GROUPS` in `src/utilities/constant.ts` for the full lis
 
 ## Switching users without restarting the app
 
-Stop the fake OIDC server (Ctrl+C), restart it with a different profile or env vars, then log out and back in within the app. No need to restart the Next.js dev server.
+Stop the fake OIDC server (Ctrl+C), restart it with a different profile or env vars, then log out and back in within the app. No need to restart the dev server.
 
 ```bash
 # was running with default, switch to admin
-node server.mjs --profile admin
+bun run server.mjs --profile admin
 ```
 
 ## Verifying the JWT contents

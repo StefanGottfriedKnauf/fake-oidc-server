@@ -1,7 +1,7 @@
 /**
  * Fake OIDC server that mimics Okta for offline local development.
  *
- * Zero external dependencies — uses only Node.js built-ins (node:crypto, node:http, node:url).
+ * Runs on Bun (also compatible with Node.js).
  *
  * Implements the endpoints the app's shared library expects:
  *   - GET  /oauth2/default/.well-known/openid-configuration
@@ -14,55 +14,26 @@
  * Configure the mock user via profiles or environment variables (see README).
  *
  * Usage:
- *   node server.mjs                        # interactive profile picker
- *   node server.mjs --profile admin        # skip picker, use "admin" profile
- *   FAKE_OIDC_PROFILE=admin node server.mjs
+ *   bun run server.mjs                        # interactive profile picker
+ *   bun run server.mjs --profile admin        # skip picker, use "admin" profile
+ *   FAKE_OIDC_PROFILE=admin bun run server.mjs
  */
 
 import { createSign, generateKeyPairSync, randomUUID } from 'node:crypto'
-import { existsSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { basename, dirname, resolve } from 'node:path'
-import { createInterface } from 'node:readline'
-import { ReadStream } from 'node:tty'
 import { fileURLToPath, URL } from 'node:url'
+import prompts from 'prompts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// ---------------------------------------------------------------------------
-// TTY input — open /dev/tty directly when stdin is piped (e.g. via pnpm)
-// ---------------------------------------------------------------------------
-
-let _ttyInput = null
-
-/**
- * Get a readable TTY stream for interactive input.
- * Returns process.stdin if it's already a TTY, otherwise opens /dev/tty.
- * Returns null if no TTY is available (CI, Docker, etc.).
- */
-function getTTYInput() {
-  if (process.stdin.isTTY) return process.stdin
-  if (_ttyInput) return _ttyInput
-  try {
-    const fd = openSync('/dev/tty', 'r')
-    _ttyInput = new ReadStream(fd)
-    return _ttyInput
-  } catch {
-    return null
-  }
-}
-
-/** Close the /dev/tty stream if we opened one. */
-function closeTTYInput() {
-  if (_ttyInput) {
-    _ttyInput.destroy()
-    _ttyInput = null
-  }
-}
-const PROJECT_ROOT = resolve(__dirname, '..', '..')
 const PROFILES_DIR = resolve(__dirname, 'profiles')
 const ENV_MOCK_PATH = resolve(__dirname, '.env.mock')
-const ENV_LOCAL_PATH = resolve(PROJECT_ROOT, '.env.local')
+const CONFIG_PATH = resolve(__dirname, '.fake-oidc-config.json')
+
+// Set dynamically during boot via interactive target picker or CLI flag
+let TARGET_PROJECT_DIR = null
 
 // ---------------------------------------------------------------------------
 // Profile loader
@@ -104,95 +75,89 @@ function resolveProfileFromArgs() {
   return process.env.FAKE_OIDC_PROFILE || null
 }
 
+/**
+ * Resolve target project dir from --target CLI flag or FAKE_OIDC_TARGET env var.
+ * Returns null if neither is set (triggers interactive picker).
+ */
+function resolveTargetFromArgs() {
+  const flagIndex = process.argv.indexOf('--target')
+  if (flagIndex !== -1 && process.argv[flagIndex + 1]) {
+    return resolve(process.argv[flagIndex + 1])
+  }
+  return process.env.FAKE_OIDC_TARGET ? resolve(process.env.FAKE_OIDC_TARGET) : null
+}
+
+// ---------------------------------------------------------------------------
+// Persistent config (remembers last target path)
+// ---------------------------------------------------------------------------
+
+function loadConfig() {
+  try {
+    if (existsSync(CONFIG_PATH)) {
+      return JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
+    }
+  } catch { /* ignore corrupt config */ }
+  return {}
+}
+
+function saveConfig(config) {
+  try {
+    writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n')
+  } catch { /* best effort */ }
+}
+
 // ---------------------------------------------------------------------------
 // Interactive profile picker (TUI)
 // ---------------------------------------------------------------------------
 
-function pickProfileInteractively(profiles) {
-  return new Promise((resolvePromise) => {
-    if (profiles.length === 0) {
-      resolvePromise('default')
-      return
-    }
+async function pickProfileInteractively(profiles) {
+  if (profiles.length === 0) return 'default'
 
-    const ttyInput = getTTYInput()
-
-    // No TTY available (CI, Docker, etc.) — fall back to default
-    if (!ttyInput) {
-      const fallback = profiles.includes('default') ? 'default' : profiles[0]
-      resolvePromise(fallback)
-      return
-    }
-
-    // Load descriptions for display
-    const entries = profiles.map((name) => {
-      const p = loadProfile(name)
-      return { name, description: p.description || '' }
-    })
-
-    let selected = entries.findIndex((e) => e.name === 'default')
-    if (selected === -1) selected = 0
-
-    const DIM = '\x1b[2m'
-    const RESET = '\x1b[0m'
-    const BOLD = '\x1b[1m'
-    const _CYAN = '\x1b[36m'
-    const GREEN = '\x1b[32m'
-
-    function render() {
-      const lines = entries.length + 4
-      process.stdout.write(`\x1b[${lines}A\x1b[J`)
-      draw()
-    }
-
-    function draw() {
-      for (let i = 0; i < entries.length; i++) {
-        const { name, description } = entries[i]
-        const _marker =
-          i === selected ? `${GREEN}  ❯ ${BOLD}${name}${RESET}` : `    ${DIM}${name}${RESET}`
-        const _desc = description ? `  ${DIM}— ${description}${RESET}` : ''
-      }
-    }
-
-    // Initial draw
-    draw()
-
-    // Enable raw mode to capture individual keypresses
-    ttyInput.setRawMode(true)
-    ttyInput.resume()
-    ttyInput.setEncoding('utf8')
-
-    ttyInput.on('data', (key) => {
-      // Ctrl+C
-      if (key === '\x03') {
-        process.stdout.write('\n')
-        ttyInput.setRawMode(false)
-        closeTTYInput()
-        process.exit(0)
-      }
-
-      // Enter
-      if (key === '\r' || key === '\n') {
-        ttyInput.setRawMode(false)
-        ttyInput.pause()
-        ttyInput.removeAllListeners('data')
-        // Clear the picker and show the selection
-        const lines = entries.length + 4
-        process.stdout.write(`\x1b[${lines}A\x1b[J`)
-        resolvePromise(entries[selected].name)
-        return
-      }
-
-      // Arrow keys come as escape sequences: \x1b[A (up), \x1b[B (down)
-      if (key === '\x1b[A' || key === 'k') {
-        selected = selected > 0 ? selected - 1 : entries.length - 1
-        render()
-      } else if (key === '\x1b[B' || key === 'j') {
-        selected = selected < entries.length - 1 ? selected + 1 : 0
-        render()
-      }
-    })
+  const entries = profiles.map((name) => {
+    const p = loadProfile(name)
+    const desc = p.description ? ` — ${p.description}` : ''
+    return { title: `${name}${desc}`, value: name }
   })
+
+  const initial = entries.findIndex((e) => e.value === 'default')
+
+  const { profile } = await prompts({
+    type: 'select',
+    name: 'profile',
+    message: 'Select a profile',
+    choices: entries,
+    initial: initial === -1 ? 0 : initial,
+  }, { onCancel: () => process.exit(0) })
+
+  return profile
+}
+
+// ---------------------------------------------------------------------------
+// Interactive target project picker (TUI)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask the user which project directory should receive the .env.local file.
+ * Shows the last-used path as a default. Validates the path exists.
+ */
+async function pickTargetInteractively() {
+  const config = loadConfig()
+  const lastTarget = config.lastTarget || undefined
+
+  const { target } = await prompts({
+    type: 'text',
+    name: 'target',
+    message: 'Target project directory (where .env.local will be written)',
+    initial: lastTarget,
+    validate: (value) => {
+      if (!value) return 'Please enter a directory path'
+      const resolved = resolve(value)
+      if (!existsSync(resolved)) return `Directory not found: ${resolved}`
+      return true
+    },
+  }, { onCancel: () => process.exit(0) })
+
+  return resolve(target)
 }
 
 // ---------------------------------------------------------------------------
@@ -200,48 +165,37 @@ function pickProfileInteractively(profiles) {
 // ---------------------------------------------------------------------------
 
 /**
- * Offer to write .env.local from .env.mock.
- * In non-TTY mode, writes automatically.
- * In TTY mode, asks the user.
+ * Offer to write .env.local from .env.mock into the target project dir.
+ * In non-interactive mode, writes automatically.
+ * In interactive mode, asks the user.
  */
-async function ensureEnvLocal() {
-  const DIM = '\x1b[2m'
-  const RESET = '\x1b[0m'
-  const _GREEN = '\x1b[32m'
+async function ensureEnvLocal(interactive) {
+  if (!TARGET_PROJECT_DIR) return
 
-  const ttyInput = getTTYInput()
+  const envLocalPath = resolve(TARGET_PROJECT_DIR, '.env.local')
 
-  // No TTY — write silently
-  if (!ttyInput) {
-    writeEnvLocal()
+  if (!interactive) {
+    writeEnvLocal(envLocalPath)
     return
   }
 
-  // Interactive — ask
-  const shouldWrite = await askYesNo(
-    `Write .env.local for fake OIDC? ${DIM}(y/N)${RESET} `,
-    ttyInput,
-  )
-  if (shouldWrite) {
-    writeEnvLocal()
+  const { confirm } = await prompts({
+    type: 'confirm',
+    name: 'confirm',
+    message: `Write .env.local to ${envLocalPath}?`,
+    initial: true,
+  }, { onCancel: () => process.exit(0) })
+
+  if (confirm) {
+    writeEnvLocal(envLocalPath)
   }
 }
 
-function writeEnvLocal() {
+function writeEnvLocal(envLocalPath) {
   const content = existsSync(ENV_MOCK_PATH)
     ? readFileSync(ENV_MOCK_PATH, 'utf8')
     : `${['OKTA_DOMAIN=http://localhost:' + PORT, 'OKTA_CLIENT_ID=fake-client-id', 'OKTA_CLIENT_SECRET=fake-client-secret', 'ENABLE_SHARED_AUTH=false'].join('\n')}\n`
-  writeFileSync(ENV_LOCAL_PATH, content)
-}
-
-function askYesNo(question, ttyInput) {
-  return new Promise((res) => {
-    const rl = createInterface({ input: ttyInput, output: process.stdout })
-    rl.question(question, (answer) => {
-      rl.close()
-      res(answer.trim().toLowerCase() === 'y')
-    })
-  })
+  writeFileSync(envLocalPath, content)
 }
 
 // ---------------------------------------------------------------------------
@@ -575,28 +529,40 @@ const server = createServer(async (req, res) => {
 
 async function boot() {
   const explicitProfile = resolveProfileFromArgs()
+  const explicitTarget = resolveTargetFromArgs()
+  const interactive = !explicitProfile || !explicitTarget
 
   if (explicitProfile) {
-    // Direct mode — skip the TUI
     ACTIVE_PROFILE_NAME = explicitProfile
     const profile = loadProfile(ACTIVE_PROFILE_NAME)
     MOCK_USER = buildMockUser(profile)
   } else {
-    // Interactive mode — show profile picker
     const profiles = listProfiles()
     ACTIVE_PROFILE_NAME = await pickProfileInteractively(profiles)
     const profile = loadProfile(ACTIVE_PROFILE_NAME)
     MOCK_USER = buildMockUser(profile)
   }
 
-  // Ensure .env.local is configured
-  await ensureEnvLocal()
+  // Resolve target project directory
+  if (explicitTarget) {
+    TARGET_PROJECT_DIR = explicitTarget
+  } else {
+    TARGET_PROJECT_DIR = await pickTargetInteractively()
+  }
 
-  // Done with interactive input — release /dev/tty if we opened it
-  closeTTYInput()
+  // Persist the target for next run
+  if (TARGET_PROJECT_DIR) {
+    const config = loadConfig()
+    config.lastTarget = TARGET_PROJECT_DIR
+    saveConfig(config)
+  }
+
+  // Ensure .env.local is configured in the target project
+  await ensureEnvLocal(interactive)
 
   // Start the HTTP server
   const groupsList = MOCK_USER.groups.join(', ')
+  const targetDisplay = TARGET_PROJECT_DIR || 'none (skipped)'
   server.listen(PORT, () => {
     // biome-ignore lint/suspicious/noConsole: CLI tool startup banner
     console.log(`
@@ -609,6 +575,8 @@ async function boot() {
 ║  Mock user:     ${(`${MOCK_USER.firstName} ${MOCK_USER.lastName}`).padEnd(41)}║
 ║  Email:         ${MOCK_USER.email.padEnd(41)}║
 ║  Groups:        ${groupsList.length > 41 ? `${groupsList.slice(0, 38)}...` : groupsList.padEnd(41)}║
+║                                                            ║
+║  Target:        ${targetDisplay.length > 41 ? `${targetDisplay.slice(0, 38)}...` : targetDisplay.padEnd(41)}║
 ╚══════════════════════════════════════════════════════════════╝
 `)
   })
