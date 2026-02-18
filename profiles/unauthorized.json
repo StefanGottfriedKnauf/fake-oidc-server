@@ -1,0 +1,8 @@
+{
+  "description": "User with no matching market groups — tests unauthorized access",
+  "firstName": "Unknown",
+  "lastName": "User",
+  "email": "unknown@example.com",
+  "knaufId": "knauf-none-001",
+  "groups": ["SOME_UNRELATED_GROUP"]
+}

@@ -1,0 +1,8 @@
+{
+  "description": "Single-market user — access to FR only",
+  "firstName": "Marie",
+  "lastName": "Dupont",
+  "email": "marie.dupont@knauf.com",
+  "knaufId": "knauf-fr-001",
+  "groups": ["CT_UP_FR_GROUP"]
+}

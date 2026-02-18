@@ -1,0 +1,8 @@
+{
+  "description": "Default local developer — access to DE and UK markets",
+  "firstName": "Local",
+  "lastName": "Developer",
+  "email": "dev@localhost",
+  "knaufId": "mock-knauf-id",
+  "groups": ["CT_UP_DE_GROUP", "CT_UP_UK_GROUP"]
+}

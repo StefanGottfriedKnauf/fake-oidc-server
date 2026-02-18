@@ -1,0 +1,8 @@
+{
+  "description": "Admin user — DE market with import/publish permissions via COMMON group",
+  "firstName": "Max",
+  "lastName": "Mustermann",
+  "email": "max.mustermann@knauf.com",
+  "knaufId": "knauf-admin-001",
+  "groups": ["CT_UP_DE_GROUP", "CT_UP_UK_GROUP", "CT_UP_COMMON_GROUP"]
+}
