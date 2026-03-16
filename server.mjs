@@ -234,7 +234,7 @@ async function ensureEnvLocal(interactive) {
 function writeEnvLocal(envLocalPath) {
   const content = existsSync(ENV_MOCK_PATH)
     ? readFileSync(ENV_MOCK_PATH, 'utf8')
-    : `${['OKTA_DOMAIN=http://localhost:' + PORT, 'OKTA_CLIENT_ID=fake-client-id', 'OKTA_CLIENT_SECRET=fake-client-secret', 'ENABLE_SHARED_AUTH=false'].join('\n')}\n`
+    : `${['OKTA_DOMAIN=http://' + HOSTNAME + ':' + PORT, 'OKTA_CLIENT_ID=fake-client-id', 'OKTA_CLIENT_SECRET=fake-client-secret', 'ENABLE_SHARED_AUTH=false'].join('\n')}\n`
   writeFileSync(envLocalPath, content)
 }
 
@@ -268,6 +268,7 @@ function buildMockUser(profile) {
 }
 
 const PORT = Number(process.env.FAKE_OIDC_PORT) || 9980
+const HOSTNAME = process.env.FAKE_OIDC_HOSTNAME || 'localhost'
 const CLIENT_ID = process.env.FAKE_OIDC_CLIENT_ID || 'fake-client-id'
 const _CLIENT_SECRET = process.env.FAKE_OIDC_CLIENT_SECRET || 'fake-client-secret'
 const ACCESS_TOKEN_LIFETIME_SEC = 3600 // 1 hour
@@ -335,7 +336,7 @@ function createAccessToken() {
   const now = Math.floor(Date.now() / 1000)
   return createJwt({
     ...MOCK_USER,
-    iss: `http://localhost:${PORT}/oauth2/default`,
+    iss: `http://${HOSTNAME}:${PORT}/oauth2/default`,
     aud: 'api://default',
     iat: now,
     exp: now + ACCESS_TOKEN_LIFETIME_SEC,
@@ -352,7 +353,7 @@ function createIdToken(nonce) {
     email: MOCK_USER.email,
     name: `${MOCK_USER.firstName} ${MOCK_USER.lastName}`,
     preferred_username: MOCK_USER.email,
-    iss: `http://localhost:${PORT}/oauth2/default`,
+    iss: `http://${HOSTNAME}:${PORT}/oauth2/default`,
     aud: CLIENT_ID,
     iat: now,
     exp: now + ACCESS_TOKEN_LIFETIME_SEC,
@@ -370,7 +371,7 @@ const authCodes = new Map()
 // Route handlers
 // ---------------------------------------------------------------------------
 
-const ISSUER = () => `http://localhost:${PORT}/oauth2/default`
+const ISSUER = () => `http://${HOSTNAME}:${PORT}/oauth2/default`
 const BASE = '/oauth2/default'
 
 function handleDiscovery(req, res) {
